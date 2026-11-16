@@ -14,17 +14,22 @@ WebSockets would need us to replace `react-router-serve` with our own server, an
 
 ## What the app runs on today (codebase facts)
 
+I checked these against the local `main` branch (the current codebase), not the older `origin/main` this branch was cut from. Every fact below holds on both.
+
 | Fact | Source |
 | --- | --- |
 | Production server is `react-router-serve ./build/server/index.js`; dev is `react-router dev` (Vite) | `package.json` scripts |
 | SSR on, framework mode, React Router 8.3.0 | `react-router.config.ts`, `package.json` |
-| No custom server, Dockerfile or deploy config in the repo | repo root |
+| No custom server and no deploy config. There is a `.dockerignore` but no app Dockerfile; `.sandcastle/Dockerfile` is for the agent sandbox, not the app | repo root |
 | One SQLite file, `data.db`, opened lazily via better-sqlite3 in WAL mode | `app/db/index.ts` |
+| "Cadence runs as one server process… the app cannot run on more than one machine against the same data" | `docs/adr/0006-one-sqlite-file-through-drizzle.md` |
+| Email already goes through a `MailTransport`: Postmark, or `.outbox/` files in dev. That is relevant to the Digest, not to live push | `app/lib/mailer.server.ts` |
+| `GLOSSARY.md` doesn't define Online, Away or Notification yet; these terms come from map #1 | `GLOSSARY.md` |
 | Auth is a cookie session (`cadence_session`), read with `getCurrentUserId(request)` | `app/lib/session.ts`, e.g. `app/routes/api.video-tracking.ts` |
 | Resource routes already exist as `api.*.ts` files registered in `app/routes.ts` | `app/routes.ts` |
 | `react-router-serve` = Express 5 + `compression` + `morgan` + `express.static`, then `app.all("/{*splat}", createRequestHandler(...))`; plain `app.listen` (HTTP/1.1, no access to the `http.Server`) | `node_modules/@react-router/serve/dist/cli.js` lines 111-127 |
 
-One SQLite file means **one server host**. Unless we deliberately run a cluster, it also means **one Node process**. That makes an in-memory fan-out registry valid. If we ever run more than one process, the processes need a shared bus such as Redis pub/sub or Postgres `LISTEN/NOTIFY`, or each process has to poll an outbox table. That cost only arrives with scale-out.
+One SQLite file means **one server host**, and ADR 0006 already commits to **one Node process**. That makes an in-memory fan-out registry valid. If we ever run more than one process, the processes need a shared bus such as Redis pub/sub or Postgres `LISTEN/NOTIFY`, or each process has to poll an outbox table. That cost only arrives with scale-out.
 
 ## Options compared
 
