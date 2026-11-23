@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 import { toast } from "sonner";
 import { MessageSquare, Pencil, Reply, Trash2 } from "lucide-react";
+import { questionGuide, replyGuide } from "~/modules/discussion-guide";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
-import { Textarea } from "~/components/ui/textarea";
+import { CommentForm, DiscussionSteps } from "~/components/comment-form";
 import { UserAvatar } from "~/components/user-avatar";
 import { cn, formatRelativeTime } from "~/lib/utils";
-import { MAX_COMMENT_LENGTH } from "~/lib/comments";
 
 // Bodies arrive pre-rendered from the server (renderComment), because comments
 // are untrusted markdown and the sanitising renderer is server-only.
@@ -34,101 +34,6 @@ function AuthorBadge({ label }: { label: string }) {
     <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
       {label}
     </span>
-  );
-}
-
-function CommentForm({
-  intent,
-  parentId,
-  commentId,
-  defaultValue,
-  placeholder,
-  submitLabel,
-  autoFocus,
-  onDone,
-}: {
-  intent: "create-comment" | "edit-comment";
-  parentId?: number;
-  commentId?: number;
-  defaultValue?: string;
-  placeholder: string;
-  submitLabel: string;
-  autoFocus?: boolean;
-  onDone?: () => void;
-}) {
-  const fetcher = useFetcher<{ ok?: boolean; error?: string }>();
-  const [body, setBody] = useState(defaultValue ?? "");
-  const submitting = fetcher.state !== "idle";
-
-  useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data) return;
-
-    if (fetcher.data.error) {
-      toast.error(fetcher.data.error);
-      return;
-    }
-
-    if (fetcher.data.ok) {
-      if (intent === "create-comment") setBody("");
-      onDone?.();
-    }
-    // onDone is recreated each render by callers; depending on it would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher.state, fetcher.data, intent]);
-
-  const tooLong = body.length > MAX_COMMENT_LENGTH;
-  const empty = body.trim().length === 0;
-
-  return (
-    <fetcher.Form method="post" className="space-y-2">
-      <input type="hidden" name="intent" value={intent} />
-      {parentId !== undefined && (
-        <input type="hidden" name="parentId" value={parentId} />
-      )}
-      {commentId !== undefined && (
-        <input type="hidden" name="commentId" value={commentId} />
-      )}
-
-      <Textarea
-        name="body"
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        placeholder={placeholder}
-        rows={4}
-        // oxlint-disable-next-line jsx-a11y/no-autofocus -- focus moves to the form the person just opened
-        autoFocus={autoFocus}
-        aria-label={placeholder}
-      />
-
-      <div className="flex items-center gap-3">
-        <Button
-          type="submit"
-          size="sm"
-          disabled={submitting || empty || tooLong}
-        >
-          {submitting ? "Posting..." : submitLabel}
-        </Button>
-
-        {onDone && (
-          <Button type="button" variant="ghost" size="sm" onClick={onDone}>
-            Cancel
-          </Button>
-        )}
-
-        <span
-          className={cn(
-            "ml-auto text-xs",
-            tooLong ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {body.length} / {MAX_COMMENT_LENGTH}
-        </span>
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        Markdown supported. Use ``` for code blocks.
-      </p>
-    </fetcher.Form>
   );
 }
 
@@ -298,12 +203,9 @@ function CommentItem({
 
           {replying && (
             <div className="mt-3">
-              <CommentForm
-                intent="create-comment"
-                parentId={comment.id}
-                placeholder={`Reply to ${comment.author.name}`}
-                submitLabel="Post reply"
-                autoFocus
+              <ReplyForm
+                comment={comment}
+                currentUserId={currentUserId}
                 onDone={() => setReplying(false)}
               />
             </div>
@@ -318,6 +220,34 @@ function CommentItem({
         canPost={canPost}
       />
     </div>
+  );
+}
+
+function ReplyForm({
+  comment,
+  currentUserId,
+  onDone,
+}: {
+  comment: RenderedComment;
+  currentUserId: number | null;
+  onDone: () => void;
+}) {
+  const guide = replyGuide({
+    viewerId: currentUserId,
+    questionAuthorId: comment.author.id,
+    questionAuthorName: comment.author.name,
+  });
+  return (
+    <CommentForm
+      intent="create-comment"
+      parentId={comment.id}
+      placeholder={guide.placeholder}
+      submitLabel={guide.submitLabel}
+      note={guide.note}
+      confirmation={guide.confirmation}
+      autoFocus
+      onDone={onDone}
+    />
   );
 }
 
@@ -355,6 +285,7 @@ export function CommentThread({
   currentUserId,
   canModerate,
   canPost,
+  viewerIsInstructor,
   instructorName,
 }: {
   comments: RenderedComment[];
@@ -362,47 +293,73 @@ export function CommentThread({
   /** Owning instructor or admin — may delete anyone's comment. */
   canModerate: boolean;
   canPost: boolean;
+  viewerIsInstructor: boolean;
   instructorName: string;
 }) {
-  return (
-    <Card className="mb-8">
-      <CardContent className="p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <MessageSquare className="size-5 text-primary" />
-          <h2 className="text-xl font-semibold">Questions &amp; Discussion</h2>
-        </div>
+  const guide = questionGuide({
+    isInstructor: viewerIsInstructor,
+    instructorName,
+  });
 
-        {comments.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-6 text-center">
-            <p className="font-medium">Stuck on this lesson?</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Ask here — {instructorName} answers questions in this course.
-              There&apos;s no such thing as a question that&apos;s too basic.
+  return (
+    <Card className="mb-8 overflow-hidden py-0">
+      <CardContent className="p-0">
+        <div className="flex items-center gap-3 px-6 pt-6">
+          <span className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <MessageSquare className="size-4.5" aria-hidden />
+          </span>
+          <div>
+            <h2 className="text-xl font-semibold">
+              Questions &amp; Discussion
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Questions and answers from everyone taking this course.
             </p>
           </div>
-        ) : (
-          <div className="divide-y">
-            {comments.map((comment) => (
-              <CommentItem
-                key={comment.id}
-                comment={comment}
-                currentUserId={currentUserId}
-                canModerate={canModerate}
-                canPost={canPost}
-                isReply={false}
-              />
-            ))}
-          </div>
-        )}
+        </div>
+
+        <div className="px-6 pb-2">
+          {comments.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Stuck on this lesson? There&apos;s no such thing as a question
+              that&apos;s too basic.
+            </p>
+          ) : (
+            <div className="mt-4 divide-y">
+              {comments.map((comment) => (
+                <CommentItem
+                  key={comment.id}
+                  comment={comment}
+                  currentUserId={currentUserId}
+                  canModerate={canModerate}
+                  canPost={canPost}
+                  isReply={false}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
         {canPost && (
-          <div className="mt-6 border-t pt-6">
+          <section
+            aria-labelledby="discussion-composer-title"
+            className="space-y-4 border-t bg-muted/30 px-6 py-6"
+          >
+            <h3
+              id="discussion-composer-title"
+              className="text-base font-semibold"
+            >
+              {guide.title}
+            </h3>
+            <DiscussionSteps steps={guide.steps} />
             <CommentForm
               intent="create-comment"
-              placeholder="Ask a question or share what you found..."
-              submitLabel="Post comment"
+              label="Your message"
+              placeholder={guide.placeholder}
+              submitLabel={guide.submitLabel}
+              confirmation={guide.confirmation}
             />
-          </div>
+          </section>
         )}
       </CardContent>
     </Card>
